@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { INITIAL_REQUESTS, TrainingRequest, User } from "./data/mockData";
+import { client } from '../db';
+import { useState, useEffect } from 'react';
+import { TrainingRequest, User } from "./data/mockData";
 import { Login } from "./components/Login";
 import { Shell } from "./components/Shell";
 import {
@@ -27,9 +28,33 @@ function aiAudit(req: TrainingRequest): { pass: boolean; comment: string } {
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [requests, setRequests] = useState<TrainingRequest[]>(INITIAL_REQUESTS);
+  const [requests, setRequests] = useState<TrainingRequest[]>([]);
   const [view, setView] = useState<View>({ kind: "list" });
   const [showNominate, setShowNominate] = useState(false);
+
+  // Sync with Turso Database on Load
+  useEffect(() => {
+    async function loadInitialData() {
+      try {
+        // Fetch User Profile (Current User: 1234)
+        const userRes = await client.execute({
+          sql: "SELECT * FROM employees WHERE employee_id = ?",
+          args: ["1234"]
+        });
+        
+        if (userRes.rows.length > 0) {
+          setUser(userRes.rows[0] as any);
+        }
+
+        // Fetch Real Requests from Database
+        const reqsRes = await client.execute("SELECT * FROM training_requests");
+        setRequests(reqsRes.rows as any);
+      } catch (error) {
+        console.error("Failed to load data from Turso:", error);
+      }
+    }
+    loadInitialData();
+  }, []);
 
   // AI Auditor background process
   useEffect(() => {
@@ -168,9 +193,20 @@ export default function App() {
         <NominationModal
           manager={user}
           onClose={() => setShowNominate(false)}
-          onCreate={(r) => {
-            setRequests((prev) => [r, ...prev]);
-            setShowNominate(false);
+          onCreate={async (r) => {
+            try {
+              // Persist to Turso
+              await client.execute({
+                sql: "INSERT INTO training_requests (emp_id, status) VALUES (?, ?)",
+                args: [user.employee_id, "Workflow"]
+              });
+              
+              // Update local state
+              setRequests((prev) => [r, ...prev]);
+              setShowNominate(false);
+            } catch (error) {
+              console.error("Database Error:", error);
+            }
           }}
         />
       )}
