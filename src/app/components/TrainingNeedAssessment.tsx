@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { createClient } from "@supabase/supabase-js";
+import { USERS } from "../data/mockData";
 
 const GRADES = ["Grade 1 — Junior","Grade 2 — Mid-level","Grade 3 — Senior","Grade 4 — Lead","Grade 5 — Principal"];
 const COMPETENCIES = ["Leadership & Management","Technical Skills","Communication","Problem Solving","Project Management"];
@@ -10,6 +12,12 @@ const VENUES = ["Head Office — Riyadh","Branch — Jeddah","Branch — Dammam"
 const METHODS = ["Classroom / In-person","Online — Self-paced","Online — Instructor-led","Blended","On-the-job training"];
 
 const SAR_RATE = 3.75;
+
+// Supabase
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL as string,
+  import.meta.env.VITE_SUPABASE_ANON_KEY as string
+);
 
 const initialForm = {
   managerId: "", reporteeId: "", payGrade: "", competency: "", otherCompetency: "",
@@ -46,6 +54,8 @@ function SectionHead({ icon, title }: { icon: string; title: string }) {
 export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
   const [form, setForm] = useState(initialForm);
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -65,12 +75,70 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
     return t > 0 ? t.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "";
   })();
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
+    setError("");
+    
     if (!form.managerId.trim() || !form.reporteeId.trim()) {
-      alert("Please fill in required fields: Manager ID and Remortees Employee ID.");
+      setError("Please fill in required fields: Manager ID and Employee ID.");
       return;
     }
-    setSubmitted(true);
+
+    setLoading(true);
+
+    try {
+      // Get employee and manager info
+      const employee = USERS.find(u => u.id.toLowerCase() === form.reporteeId.trim().toLowerCase());
+      const manager = USERS.find(u => u.id.toLowerCase() === form.managerId.trim().toLowerCase());
+
+      if (!employee) {
+        throw new Error("Employee not found");
+      }
+
+      // Generate request ID
+      const reqId = `REQ-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      // Create training request object
+      const trainingRequest = {
+        id: reqId,
+        employee_id: employee.id,
+        employee_name: employee.name,
+        employee_department: employee.department,
+        nominator_id: manager?.id || form.managerId,
+        nominator_name: manager?.name || form.managerId,
+        competency: form.competency || form.otherCompetency || "",
+        quarter: form.timeFrame || "Q1-2026",
+        course_title: form.trainingTitle === "Other" ? form.otherTitle : form.trainingTitle,
+        custom_course: form.trainingTitle === "Other" ? form.otherTitle : null,
+        institute_id: form.provider || "I001",
+        start_date: form.startDay || "",
+        end_date: form.endDay || "",
+        duration_days: parseInt(form.durationDays) || 0,
+        basic_cost: parseFloat(form.courseFeesUSD) || 0,
+        currency: "USD",
+        usd_cost: parseFloat(form.courseFeesUSD) || 0,
+        venue_type: form.venue.split(" — ")[0] || "Virtual",
+        city: form.trainingCity || "",
+        status: "PendingAI",
+        comments: [form.trainingDetails || "No additional details provided"],
+        created_at: new Date().toISOString().split("T")[0],
+      };
+
+      // Save to Supabase
+      const { error: saveError } = await supabase
+        .from("training_requests")
+        .insert([trainingRequest]);
+
+      if (saveError) {
+        throw new Error(saveError.message);
+      }
+
+      setSubmitted(true);
+    } catch (err) {
+      setError((err as Error).message || "Failed to submit request");
+      console.error("Submit error:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (submitted) {
@@ -79,7 +147,7 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
         <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center border-t-4 border-[#2D5A39]">
           <div className="text-6xl mb-6">✅</div>
           <h2 className="text-[#2D5A39] font-bold text-2xl mb-3">Request Submitted</h2>
-          <p className="text-gray-600 mb-8">Your Training Need Assessment has been successfully submitted for review.</p>
+          <p className="text-gray-600 mb-8">Your Training Need Assessment has been successfully saved to the database and sent for AI audit.</p>
           <button
             onClick={onBack}
             className="w-full bg-[#2D5A39] hover:bg-[#1F4128] text-white font-bold py-3 px-6 rounded-lg transition-colors"
@@ -110,6 +178,12 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
         <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
           <div className="p-8 flex flex-col gap-8">
             
+            {error && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-red-700">
+                ⚠️ {error}
+              </div>
+            )}
+
             {/* Section 1 */}
             <div className="border border-gray-200 rounded-xl shadow-sm">
               <SectionHead icon="👤" title="Manager Selection" />
@@ -117,7 +191,7 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
                 <Field label="Manager ID" required>
                   <input className={inputCls} value={form.managerId} onChange={set("managerId")} />
                 </Field>
-                <Field label="Remortees Employee ID" required>
+                <Field label="Employee ID" required>
                   <input className={inputCls} value={form.reporteeId} onChange={set("reporteeId")} />
                 </Field>
                 <Field label="Employee Pay Grade">
@@ -166,7 +240,7 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
                 <Field label="Other Training Title">
                   <input className={inputCls} value={form.otherTitle} onChange={set("otherTitle")} />
                 </Field>
-                <Field label="Employee">
+                <Field label="Employee Name">
                   <input className={inputCls} value={form.employeeName} onChange={set("employeeName")} />
                 </Field>
                 <Field label="Duration in Days">
@@ -181,7 +255,7 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
                 <Field label="Course Fees in USD">
                   <input type="number" step="0.01" className={inputCls} value={form.courseFeesUSD} onChange={set("courseFeesUSD")} />
                 </Field>
-                <Field label="Cours Feedback Rating">
+                <Field label="Course Feedback Rating">
                   <input type="number" className={inputCls} value={form.rating} onChange={set("rating")} />
                 </Field>
               </div>
@@ -241,15 +315,24 @@ export function TrainingNeedAssessment({ onBack }: { onBack: () => void }) {
             <div className="flex justify-end gap-4 mt-4 pt-6 border-t border-gray-200">
               <button
                 onClick={onBack}
-                className="px-8 py-3 rounded-lg border-2 border-red-600 text-red-600 font-bold hover:bg-red-50 transition-colors"
+                disabled={loading}
+                className="px-8 py-3 rounded-lg border-2 border-red-600 text-red-600 font-bold hover:bg-red-50 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleSubmit}
-                className="px-8 py-3 rounded-lg bg-[#2D5A39] text-white font-bold hover:bg-[#1F4128] transition-colors"
+                disabled={loading}
+                className="px-8 py-3 rounded-lg bg-[#2D5A39] text-white font-bold hover:bg-[#1F4128] transition-colors disabled:opacity-50 flex items-center gap-2"
               >
-                Submit
+                {loading ? (
+                  <>
+                    <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  "Submit"
+                )}
               </button>
             </div>
           </div>
